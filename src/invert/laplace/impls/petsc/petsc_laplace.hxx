@@ -4,9 +4,10 @@ class LaplacePetsc;
 #ifndef __PETSC_LAPLACE_H__
 #define __PETSC_LAPLACE_H__
 
-#ifndef BOUT_HAS_PETSC_DEV
+#ifndef BOUT_HAS_PETSC
 
 #include <boutexception.hxx>
+#include <invert_laplace.hxx>
 
 class LaplacePetsc : public Laplacian {
 public:
@@ -15,15 +16,19 @@ public:
 
 #else
 
-#include <invert_laplace.hxx>
+#include <petscksp.h>
 #include <options.hxx>
-
-#include <petscvec.h>
+#include <invert_laplace.hxx>
 
 class LaplacePetsc : public Laplacian {
 public:
-  LaplacePetsc(Options *opt = NULL) : Laplacian(opt) {}
-  ~LaplacePetsc() {}
+  LaplacePetsc(Options *opt = NULL);
+  ~LaplacePetsc() {
+    KSPDestroy( &ksp ); 
+    VecDestroy( &xs );  
+    VecDestroy( &bs ); 
+    MatDestroy( &MatA );  
+  }
   
   void setCoefA(const Field2D &val) { A = val; }
   void setCoefC(const Field2D &val) { C = val; }
@@ -35,12 +40,20 @@ public:
   
   const FieldPerp solve(const FieldPerp &b);
   const FieldPerp solve(const FieldPerp &b, const FieldPerp &x0);
+
+  void Element(int i, int x, int z, int xshift, int zshift, PetscScalar ele, Mat &MatA );
+  void Coeffs( int x, int y, int z, BoutReal &A1, BoutReal &A2, BoutReal &A3, BoutReal &A4, BoutReal &A5 );
   
 private:
   Field3D A, C, D;
+
+  FieldPerp sol; // solution
   
+  int meshx, meshz, size, localN;
   MPI_Comm comm;
-  Vec x, b;
+  Mat MatA;
+  Vec xs, bs; // solution, RHS
+  KSP ksp;
 };
 
 #endif //BOUT_HAS_PETSC_DEV
