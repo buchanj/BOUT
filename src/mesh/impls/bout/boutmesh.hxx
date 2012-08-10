@@ -53,6 +53,9 @@ class BoutMesh : public Mesh {
   
   SurfaceIter* iterateSurfaces();
   friend class BoutSurfaceIter;
+  DistribSurfaceIter* iterateSurfacesDistrib() {return NULL;}
+  friend class BoutDistribSurfaceIter;
+
   const Field2D averageY(const Field2D&);
   const Field3D averageY(const Field3D &f);
   bool surfaceClosed(int jx);
@@ -204,7 +207,7 @@ class BoutSurfaceIter : public SurfaceIter {
  private:
   BoutMesh* m;
 };
-/*
+
 class BoutDistribSurfaceIter : public DistribSurfaceIter {
  public:
   BoutDistribSurfaceIter(BoutMesh* mi);
@@ -217,14 +220,17 @@ class BoutDistribSurfaceIter : public DistribSurfaceIter {
   
   int gather(const Field2D &f, BoutReal *data);
   int gather(const Field3D &f, BoutReal **data);
-  int gather(const FieldGroup &f, BoutReal *data);
+  //int gather(const FieldGroup &f, BoutReal *data);
 
   int scatter(BoutReal *data, Field2D &f);
   int scatter(BoutReal **data, Field3D &f);
-  int scatter(BoutReal *data, FieldGroup &f);
+  //int scatter(BoutReal *data, FieldGroup &f);
  private:
   BoutMesh* m;
+  int alldone; ///< How many surfaces have been done already
+  bool closed(int x, BoutReal &ts);
+  MPI_Comm communicator(int xp=-1);
+  int ysize(int x);
 };
-*/
 
 #endif // __BOUTMESH_H__
