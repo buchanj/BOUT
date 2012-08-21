@@ -1945,13 +1945,11 @@ void Field3D::cleanup()
 
 ///////////////////// BOUNDARY CONDITIONS //////////////////
 
-void Field3D::setBackground(const Field2D &f2d)
-{
+void Field3D::setBackground(const Field2D &f2d) {
   background = &f2d;
 }
 
-void Field3D::applyBoundary()
-{
+void Field3D::applyBoundary() {
 #ifdef CHECK
   msg_stack.push("Field3D::applyBoundary()");
   
@@ -2004,8 +2002,7 @@ void Field3D::applyBoundary()
 #endif
 }
 
-void Field3D::applyBoundary(const string &condition)
-{
+void Field3D::applyBoundary(const string &condition) {
 #ifdef CHECK
   msg_stack.push("Field3D::applyBoundary(condition)");
   
@@ -2167,7 +2164,10 @@ memblock3d *Field3D::newBlock() const
     }else {
       // No more blocks left - allocate a new block
       nb = new memblock3d;
-
+      
+      if(mesh == NULL) // Mesh not created yet
+        throw BoutException("Assignment to Field3D before mesh is created");
+      
       nb->data = r3tensor(mesh->ngx, mesh->ngy, mesh->ngz);
       nb->refs = 1;
       nb->next = NULL;
