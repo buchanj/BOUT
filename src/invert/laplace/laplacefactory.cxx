@@ -48,17 +48,17 @@ Laplacian* LaplaceFactory::createLaplacian(Options *options) {
       return new LaplacePetsc(options);
     }else {
       throw BoutException("Unknown serial Laplacian solver type '%s'", type.c_str());
-    }
+      } 
   }
   
   options->get("type", type, LAPLACE_SPT);
-
+  
   if(strcasecmp(type.c_str(), LAPLACE_PDD) == 0) {
     return new LaplacePDD(options);
   }else if(strcasecmp(type.c_str(), LAPLACE_SPT) == 0) {
     return new LaplaceSPT(options);
   }else if(strcasecmp(type.c_str(), LAPLACE_PETSC) == 0) {
-      return new LaplacePetsc(options);
+    return new LaplacePetsc(options);
   }else {
     throw BoutException("Unknown parallel Laplacian solver type '%s'", type.c_str());
   }

@@ -16,9 +16,11 @@ public:
 
 #else
 
+#include <output.hxx>
 #include <petscksp.h>
 #include <options.hxx>
 #include <invert_laplace.hxx>
+#include <bout/petsclib.hxx>
 
 class LaplacePetsc : public Laplacian {
 public:
@@ -27,7 +29,7 @@ public:
     KSPDestroy( &ksp ); 
     VecDestroy( &xs );  
     VecDestroy( &bs ); 
-    MatDestroy( &MatA );  
+    MatDestroy( &MatA );
   }
   
   void setCoefA(const Field2D &val) { A = val; }
@@ -49,11 +51,16 @@ private:
 
   FieldPerp sol; // solution
   
+  // Istart is the first row of MatA owned by the process, Iend is 1 greater than the last row.
+  int Istart, Iend; 
+
   int meshx, meshz, size, localN;
   MPI_Comm comm;
   Mat MatA;
   Vec xs, bs; // solution, RHS
   KSP ksp;
+
+  PetscLib lib;
 };
 
 #endif //BOUT_HAS_PETSC_DEV
