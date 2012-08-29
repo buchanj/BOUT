@@ -286,8 +286,11 @@ void LaplacePetsc::Coeffs( int x, int y, int z, BoutReal &coef1, BoutReal &coef2
     }
   
   // A first order derivative term
-  if((x > 0) && (x < (mesh->ngx-1)))
-    coef4 += mesh->g11[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
+  if( (x > 0) && (x < (mesh->ngx-1)) )
+    {
+      coef4 += mesh->g11[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
+      coef5 += mesh->g13[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
+    }
   
   if(mesh->ShiftXderivs && mesh->IncIntShear) {
     // d2dz2 term
@@ -295,11 +298,6 @@ void LaplacePetsc::Coeffs( int x, int y, int z, BoutReal &coef1, BoutReal &coef2
     // Mixed derivative
     coef3 = 0.0; // This cancels out
   }
-  
-  //  coef1 = coef1 / SQ(mesh->dx[x][y]);
-  coef1 = coef1 / pow(mesh->dx[x][y], 2.0);
-  coef3 = coef3 / 2.*mesh->dx[x][y];
-  coef4 = coef4 / 2.*mesh->dx[x][y];
 }
 
 
