@@ -12,6 +12,12 @@ class LaplacePetsc;
 class LaplacePetsc : public Laplacian {
 public:
   LaplacePetsc(Options *opt = NULL) { throw BoutException("No PETSc solver available"); }
+
+  void setCoefA(const Field2D &val) {}
+  void setCoefC(const Field2D &val) {}
+  void setCoefD(const Field2D &val) {}
+
+  const FieldPerp solve(const FieldPerp &b) {}
 };
 
 #else
@@ -32,13 +38,13 @@ public:
     MatDestroy( &MatA );
   }
   
-  void setCoefA(const Field2D &val) { A = val; }
-  void setCoefC(const Field2D &val) { C = val; }
-  void setCoefD(const Field2D &val) { D = val; }
+  void setCoefA(const Field2D &val) { A = val; coefchanged = true;}
+  void setCoefC(const Field2D &val) { C = val; coefchanged = true;}
+  void setCoefD(const Field2D &val) { D = val; coefchanged = true;}
 
-  void setCoefA(const Field3D &val) { A = val; }
-  void setCoefC(const Field3D &val) { C = val; }
-  void setCoefD(const Field3D &val) { D = val; }
+  void setCoefA(const Field3D &val) { A = val; coefchanged = true;}
+  void setCoefC(const Field3D &val) { C = val; coefchanged = true;}
+  void setCoefD(const Field3D &val) { D = val; coefchanged = true;}
   
   const FieldPerp solve(const FieldPerp &b);
   const FieldPerp solve(const FieldPerp &b, const FieldPerp &x0);
@@ -48,6 +54,8 @@ public:
   
 private:
   Field3D A, C, D;
+  bool coefchanged; // Set to true when A,C or D coefficients are changed
+  int lastflag;     // The flag used to construct the matrix
 
   FieldPerp sol; // solution
   

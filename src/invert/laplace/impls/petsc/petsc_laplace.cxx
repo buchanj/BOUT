@@ -34,13 +34,17 @@ LaplacePetsc::LaplacePetsc(Options *opt) : Laplacian(opt) {
   
   // Set size of Matrix on each processor to localN x localN
   MatCreate( comm, &MatA );                                
-  MatSetSizes( MatA, localN, localN, size, size );                  
-  MatSetFromOptions(MatA);                                       
-  MatMPIAIJSetPreallocation( MatA,9, PETSC_NULL, 9, PETSC_NULL ); 
+  MatSetSizes( MatA, localN, localN, size, size );
+  MatSetFromOptions(MatA);
+  MatMPIAIJSetPreallocation( MatA,9, PETSC_NULL, 9, PETSC_NULL );
   MatSetUp(MatA); 
 
   // Declare KSP Context 
   KSPCreate( comm, &ksp ); 
+
+  // Ensure that the matrix is constructed first time
+  coefchanged = true;
+  lastflag = -1;
 }
 
 const FieldPerp LaplacePetsc::solve(const FieldPerp &b) {
@@ -52,127 +56,186 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
   int y = b.getIndex();           // Get the Y index
   sol = (FieldPerp) *b.clone();   // Initialize the solution field.
 
-  // Set Matrix Elements
-
   // Determine which row/columns of the matrix are locally owned
   MatGetOwnershipRange( MatA, &Istart, &Iend );
 
-  // Loop over locally owned rows of matrix A - i labels NODE POINT from bottom left (0,0) = 0 to top right (meshx-1,meshz-1) = meshx*meshz-1
-  // i increments by 1 for an increase of 1 in Z and by meshz for an increase of 1 in X.
   int i = Istart;
+  
+  if(coefchanged || (flags != lastflag)) { // Coefficients or settings changed
+    // Set Matrix Elements
 
-  // X=0 to mesh->xstart-1 defines the boundary region of the domain.
-  if( mesh->firstX() ) 
-    {
-      for(int x=0; x<mesh->xstart; x++)
-	{
-	  for(int z=0; z<mesh->ngz-1; z++) 
-	    {
-	      // Set Diagonal Values to 1
-	      PetscScalar val = 1;
-	      MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);  
-	      
-	      // Set values corresponding to node adjacent in x to -1 if zero gradiaent condition is set.
-	      val = -1;
-	      if(flags & INVERT_AC_IN_GRAD) 
-		Element(i,x,z, 1, 0, val, MatA ); 
-	      
-	      // Set Components of RHS
-	      val=0;
-	      if( flags & INVERT_IN_RHS )         val = b[x][z];
-	      else if( flags & INVERT_IN_SET )    val = x0[x][z];
-	      VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
-	      
-	      i++; // Increment row in Petsc matrix
-	    }
-	}
+    // Loop over locally owned rows of matrix A - i labels NODE POINT from bottom left (0,0) = 0 to top right (meshx-1,meshz-1) = meshx*meshz-1
+    // i increments by 1 for an increase of 1 in Z and by meshz for an increase of 1 in X.
+    
+    // X=0 to mesh->xstart-1 defines the boundary region of the domain.
+    if( mesh->firstX() ) 
+      {
+        for(int x=0; x<mesh->xstart; x++)
+          {
+            for(int z=0; z<mesh->ngz-1; z++) 
+              {
+                // Set Diagonal Values to 1
+                PetscScalar val = 1;
+                MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);  
+                
+                // Set values corresponding to node adjacent in x to -1 if zero gradiaent condition is set.
+                val = -1;
+                if(flags & INVERT_AC_IN_GRAD) {
+                  Element(i,x,z, 1, 0, val, MatA ); 
+                }else
+                  Element(i,x,z, 1, 0, 0.0, MatA ); // Set to zero
+                
+                // Set Components of RHS
+                val=0;
+                if( flags & INVERT_IN_RHS )         val = b[x][z];
+                else if( flags & INVERT_IN_SET )    val = x0[x][z];
+                VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+                
+                i++; // Increment row in Petsc matrix
+              }
+          }
+      }
+    
+    // Main domain with Laplacian operator
+    for(int x=mesh->xstart; x <= mesh->xend; x++)
+      {
+        for(int z=0; z<mesh->ngz-1; z++) 
+          {
+            BoutReal A0, A1, A2, A3, A4, A5;
+            A0 = A[x][y][z];
+            Coeffs( x, y, z, A1, A2, A3, A4, A5 );
+            
+            // Set Matrix Elements
+            // f(i,j) = f(x,z)
+            PetscScalar val = A0 - 2.0*( (A1 / pow(mesh->dx[x][y],2.0)) + (A2 / pow(mesh->dz,2.0)) ); 
+            MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES); 
+            
+            // f(i-1,j-1)
+            val = A3 / 4.0*( mesh->dx[x][y] * mesh->dz ); 
+            Element(i,x,z, -1, -1, val, MatA ); 
+            
+            // f(i,j-1)
+            val = A2/( pow( mesh->dz,2.0) ) - A5/( 2.0*mesh->dz ); 
+            Element(i,x,z, 0, -1, val, MatA ); 
+            
+            // f(i+1,j-1)
+            val = -1.0*A3/( 4.0*mesh->dx[x][y]*mesh->dz); 
+            Element(i,x,z, 1, -1, val, MatA );
+            
+            // f(i-1,j)
+            val = A1/( pow( mesh->dx[x][y],2.0) ) - A4/( 2.0*mesh->dx[x][y] ); 
+            Element(i,x,z, -1, 0, val, MatA );
+            
+            // f(i+1,j)
+            val = A1/( pow( mesh->dx[x][y],2.0) ) + A4/( 2.0*mesh->dx[x][y] ); 
+            Element(i,x,z, 1, 0, val, MatA );
+            
+            // f(i-1,j+1)
+            val = -1.0*A3/( 4*mesh->dx[x][y]*mesh->dz ); 
+            Element(i,x,z, -1, 1, val, MatA );
+            
+            // f(i,j+1)
+            val = A2/( pow( mesh->dz,2.0) ) + A5/( 2.0*mesh->dz ); 
+            Element(i,x,z, 0, 1, val, MatA );
+            
+            // f(i+1,j+1)
+            val = A3/( 4.0*mesh->dx[x][y]*mesh->dz ); 
+            Element(i,x,z, 1, 1, val, MatA );
+            
+            // Set Components of RHS Vector
+            val  = b[x][z];
+            VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+            i++;
+          }
+      }
+    
+    // X=mesh->xend+1 to mesh->ngx-1 defines the upper boundary region of the domain.
+    if( mesh->lastX() ) 
+      {
+        for(int x=mesh->xend+1; x<mesh->ngx; x++)
+          {
+            for(int z=0; z<mesh->ngz-1; z++) 
+              {
+                PetscScalar val = 1; 
+                MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);
+                
+                val = -1;
+                if(flags & INVERT_AC_OUT_GRAD) {
+                  Element(i,x,z, -1, 0, val, MatA );
+                }else {
+                  Element(i,x,z, -1, 0, 0.0, MatA );
+                }
+                
+                // Set Components of RHS
+                val=0;
+                if( flags & INVERT_OUT_RHS )        val = b[x][z];
+                else if( flags & INVERT_OUT_SET )   val = x0[x][z];
+                VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+                
+                i++; // Increment row in Petsc matrix
+              }
+          }
+      }
+    
+    if(i != Iend) {
+      throw BoutException("Petsc index sanity check failed");
     }
+    
+    // Assemble Matrix
+    MatAssemblyBegin( MatA, MAT_FINAL_ASSEMBLY );
+    MatAssemblyEnd( MatA, MAT_FINAL_ASSEMBLY );
 
-  // Main domain with Laplacian operator
-  for(int x=mesh->xstart; x <= mesh->xend; x++)
-    {
-      for(int z=0; z<mesh->ngz-1; z++) 
-	{
-	  BoutReal A0, A1, A2, A3, A4, A5;
-	  A0 = A[x][y][z];
-	  Coeffs( x, y, z, A1, A2, A3, A4, A5 );
+    // Record which flags were used for this matrix
+    lastflag = flags;
+  }else {
+    // Matrix hasn't changed. Only need to set Vec values
+    
+    if( mesh->firstX() ) 
+      {
+        for(int x=0; x<mesh->xstart; x++)
+          {
+            for(int z=0; z<mesh->ngz-1; z++) 
+              {
+                // Set Components of RHS
+                PetscScalar  val=0;
+                if( flags & INVERT_IN_RHS )         val = b[x][z];
+                else if( flags & INVERT_IN_SET )    val = x0[x][z];
+                VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+                
+                i++; // Increment row in Petsc matrix
+              }
+          }
+      }
 
-	  // Set Matrix Elements
-	  // f(i,j) = f(x,z)
-	  PetscScalar val = A0 - 2.0*( (A1 / pow(mesh->dx[x][y],2.0)) + (A2 / pow(mesh->dz,2.0)) ); 
-	  MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES); 
-      
-	  // f(i-1,j-1)
-	  val = A3 / 4.0*( mesh->dx[x][y] * mesh->dz ); 
-	  Element(i,x,z, -1, -1, val, MatA ); 
-      
-	  // f(i,j-1)
-	  val = A2/( pow( mesh->dz,2.0) ) - A5/( 2.0*mesh->dz ); 
-	  Element(i,x,z, 0, -1, val, MatA ); 
-      
-	  // f(i+1,j-1)
-	  val = -1.0*A3/( 4.0*mesh->dx[x][y]*mesh->dz); 
-	  Element(i,x,z, 1, -1, val, MatA );
-      
-	  // f(i-1,j)
-	  val = A1/( pow( mesh->dx[x][y],2.0) ) - A4/( 2.0*mesh->dx[x][y] ); 
-	  Element(i,x,z, -1, 0, val, MatA );
-
-	  // f(i+1,j)
-	  val = A1/( pow( mesh->dx[x][y],2.0) ) + A4/( 2.0*mesh->dx[x][y] ); 
-	  Element(i,x,z, 1, 0, val, MatA );
-      
-	  // f(i-1,j+1)
-	  val = -1.0*A3/( 4*mesh->dx[x][y]*mesh->dz ); 
-	  Element(i,x,z, -1, 1, val, MatA );
-      
-	  // f(i,j+1)
-	  val = A2/( pow( mesh->dz,2.0) ) + A5/( 2.0*mesh->dz ); 
-	  Element(i,x,z, 0, 1, val, MatA );
-
-	  // f(i+1,j+1)
-	  val = A3/( 4.0*mesh->dx[x][y]*mesh->dz ); 
-	  Element(i,x,z, 1, 1, val, MatA );
-      
-	  // Set Components of RHS Vector
-	  val  = b[x][z];
-	  VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
-	  i++;
-	}
+    for(int x=mesh->xstart; x <= mesh->xend; x++)
+      {
+        for(int z=0; z<mesh->ngz-1; z++) 
+          {
+            // Set Components of RHS Vector
+            PetscScalar val  = b[x][z];
+            VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+            i++;
+          }
+      }
+    if( mesh->lastX() ) 
+      {
+        for(int x=mesh->xend+1; x<mesh->ngx; x++)
+          {
+            for(int z=0; z<mesh->ngz-1; z++) 
+              {
+                PetscScalar val=0;
+                if( flags & INVERT_OUT_RHS )        val = b[x][z];
+                else if( flags & INVERT_OUT_SET )   val = x0[x][z];
+                VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+                
+                i++; // Increment row in Petsc matrix
+              }
+          }
+      }
+    if(i != Iend) {
+      throw BoutException("Petsc index sanity check failed");
     }
-
-  // X=mesh->xend+1 to mesh->ngx-1 defines the upper boundary region of the domain.
-  if( mesh->lastX() ) 
-    {
-      for(int x=mesh->xend+1; x<mesh->ngx; x++)
-	{
-	  for(int z=0; z<mesh->ngz-1; z++) 
-	    {
-	      PetscScalar val = 1; 
-	      MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);
-	      
-	      val = -1;
-	      if(flags & INVERT_AC_OUT_GRAD) 
-		Element(i,x,z, -1, 0, val, MatA );
-	      
-	      // Set Components of RHS
-	      val=0;
-	      if( flags & INVERT_OUT_RHS )        val = b[x][z];
-	      else if( flags & INVERT_OUT_SET )   val = x0[x][z];
-	      VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
-	      
-	      i++; // Increment row in Petsc matrix
-	    }
-	}
-    }
-
-  if(i != Iend) {
-    throw BoutException("Petsc index sanity check failed");
   }
- 
-  // Assemble Matrix
-  MatAssemblyBegin( MatA, MAT_FINAL_ASSEMBLY );     
-  MatAssemblyEnd( MatA, MAT_FINAL_ASSEMBLY );     
 
   // Assemble RHS Vector
   VecAssemblyBegin(bs);
