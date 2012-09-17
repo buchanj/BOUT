@@ -1,10 +1,24 @@
-#include <globals.hxx>
-#include <boutexception.hxx>
 #include "petsc_laplace.hxx"
+
+#define KSP_RICHARDSON  "richardson"
+#define KSP_CHEBYSHEV   "chebyshev"
+#define KSP_CG          "cg"
+#define KSP_GMRES       "gmres"
+#define KSP_TCQMR       "tcqmr"
+#define KSP_BCGS        "bcgs"
+#define KSP_CGS         "cgs"
+#define KSP_TFQMR       "tfqmr"
+#define KSP_CR          "cr"
+#define KSP_LSQR        "lsqr"
+#define KSP_BICG        "bicg"
+#define KSP_PREONLY     "preonly"
 
 #ifdef BOUT_HAS_PETSC
 
 LaplacePetsc::LaplacePetsc(Options *opt) : Laplacian(opt) {
+
+  // Get Options in Laplace Section
+  opts = Options::getRoot()->getSection("laplace");
 
   // Get communicator for group of processors in X - all points in z-x plane for fixed y.
   comm = mesh->getXcomm();
@@ -36,11 +50,42 @@ LaplacePetsc::LaplacePetsc(Options *opt) : Laplacian(opt) {
   MatCreate( comm, &MatA );                                
   MatSetSizes( MatA, localN, localN, size, size );
   MatSetFromOptions(MatA);
-  MatMPIAIJSetPreallocation( MatA,9, PETSC_NULL, 9, PETSC_NULL );
+  MatMPIAIJSetPreallocation( MatA,25, PETSC_NULL, 25, PETSC_NULL );
   MatSetUp(MatA); 
 
   // Declare KSP Context 
   KSPCreate( comm, &ksp ); 
+
+  // Get KSP Solver Type
+  string type;
+  opts->get("ksptype", type, KSP_GMRES);
+  
+  if(strcasecmp(type.c_str(), KSP_RICHARDSON) == 0)     ksptype = KSPRICHARDSON;
+  else if(strcasecmp(type.c_str(), KSP_CHEBYSHEV) == 0) ksptype = KSPCHEBYSHEV;
+  else if(strcasecmp(type.c_str(), KSP_CG) == 0)        ksptype = KSPCG;
+  else if(strcasecmp(type.c_str(), KSP_GMRES) == 0)     ksptype = KSPGMRES;
+  else if(strcasecmp(type.c_str(), KSP_TCQMR) == 0)     ksptype = KSPTCQMR;
+  else if(strcasecmp(type.c_str(), KSP_BCGS) == 0)      ksptype = KSPBCGS;
+  else if(strcasecmp(type.c_str(), KSP_CGS) == 0)       ksptype = KSPCGS;
+  else if(strcasecmp(type.c_str(), KSP_TFQMR) == 0)     ksptype = KSPTFQMR;
+  else if(strcasecmp(type.c_str(), KSP_CR) == 0)        ksptype = KSPCR;
+  else if(strcasecmp(type.c_str(), KSP_LSQR) == 0)      ksptype = KSPLSQR;
+  else if(strcasecmp(type.c_str(), KSP_BICG) == 0)      ksptype = KSPBICG;
+  else if(strcasecmp(type.c_str(), KSP_PREONLY) == 0)   ksptype = KSPPREONLY;
+  else 
+    throw BoutException("Unknown Krylov solver type '%s'", type.c_str());
+
+  // Get Options specific to particular solver types
+  opts->get("richardson_damping_factor",richardson_damping_factor,1.0,true);
+  opts->get("chebyshev_max",chebyshev_max,100,true);
+  opts->get("chebyshev_min",chebyshev_min,0.01,true);
+  opts->get("gmres_max_steps",gmres_max_steps,30,true);
+ 
+  // Get Tolerances for KSP solver
+  opts->get("rtol",rtol,pow(10.0,-5),true);
+  opts->get("atol",atol,pow(10.0,-50),true);
+  opts->get("dtol",dtol,pow(10.0,5),true);
+  opts->get("maxits",maxits,pow(10.0,5),true);
 
   // Ensure that the matrix is constructed first time
   coefchanged = true;
@@ -79,9 +124,8 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);  
                 
                 // Set values corresponding to node adjacent in x to -1 if zero gradiaent condition is set.
-                val = -1;
                 if(flags & INVERT_AC_IN_GRAD) {
-                  Element(i,x,z, 1, 0, val, MatA ); 
+                  Element(i,x,z, 1, 0, -1.0, MatA ); 
                 }else
                   Element(i,x,z, 1, 0, 0.0, MatA ); // Set to zero
                 
@@ -90,6 +134,9 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 if( flags & INVERT_IN_RHS )         val = b[x][z];
                 else if( flags & INVERT_IN_SET )    val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+		val=x0[x][z];
+		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
               }
@@ -145,6 +192,10 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
             // Set Components of RHS Vector
             val  = b[x][z];
             VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+	    // Set Components of Trial Solution Vector
+	    val = x0[x][z];
+	    VecSetValues( xs, 1, &i, &val, INSERT_VALUES ); 
             i++;
           }
       }
@@ -159,9 +210,8 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 PetscScalar val = 1; 
                 MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);
                 
-                val = -1;
                 if(flags & INVERT_AC_OUT_GRAD) {
-                  Element(i,x,z, -1, 0, val, MatA );
+                  Element(i,x,z, -1, 0, -1.0, MatA );
                 }else {
                   Element(i,x,z, -1, 0, 0.0, MatA );
                 }
@@ -171,6 +221,9 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 if( flags & INVERT_OUT_RHS )        val = b[x][z];
                 else if( flags & INVERT_OUT_SET )   val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+		val=x0[x][z];
+		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
               }
@@ -196,11 +249,14 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
           {
             for(int z=0; z<mesh->ngz-1; z++) 
               {
-                // Set Components of RHS
+                // Set Components of RHS and Trial Solution
                 PetscScalar  val=0;
                 if( flags & INVERT_IN_RHS )         val = b[x][z];
                 else if( flags & INVERT_IN_SET )    val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+		val=x0[x][z];
+		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
               }
@@ -211,9 +267,13 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
       {
         for(int z=0; z<mesh->ngz-1; z++) 
           {
-            // Set Components of RHS Vector
+            // Set Components of RHS Vector and Trial Solution
             PetscScalar val  = b[x][z];
             VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+	    val=x0[x][z];
+	    VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
+
             i++;
           }
       }
@@ -227,6 +287,9 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 if( flags & INVERT_OUT_RHS )        val = b[x][z];
                 else if( flags & INVERT_OUT_SET )   val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+		val = x0[x][z];
+		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
               }
@@ -241,12 +304,23 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
   VecAssemblyBegin(bs);
   VecAssemblyEnd(bs);
 
-  // Create Linear Solver
-  KSPCreate( comm, &ksp );                   
+  // Assemble Trial Solution Vector
+  VecAssemblyBegin(xs);
+  VecAssemblyEnd(xs);
+
+  // Configure Linear Solver               
   KSPSetOperators( ksp,MatA,MatA,DIFFERENT_NONZERO_PATTERN ); 
-  KSPSetFromOptions( ksp );                      
+  KSPSetType( ksp, ksptype );
+
+  if( ksptype == KSPRICHARDSON )     KSPRichardsonSetScale( ksp, richardson_damping_factor );
+  else if( ksptype == KSPCHEBYSHEV ) KSPChebyshevSetEigenvalues( ksp, chebyshev_max, chebyshev_min );
+  else if( ksptype == KSPGMRES )     KSPGMRESSetRestart( ksp, gmres_max_steps );
+
+  KSPSetTolerances( ksp, rtol, atol, dtol, maxits );
+  if( !( flags & INVERT_START_NEW ) ) KSPSetInitialGuessNonzero( ksp, (PetscBool) true );
+  KSPSetFromOptions( ksp );                
  
-  // Solve the system - FIXME add functionality to change solver type from options.
+  // Solve the system
   KSPSolve( ksp, bs, xs );               
 
   // Add data to FieldPerp Object

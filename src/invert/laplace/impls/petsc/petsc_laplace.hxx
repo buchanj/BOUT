@@ -22,11 +22,13 @@ public:
 
 #else
 
+#include <globals.hxx>
 #include <output.hxx>
 #include <petscksp.h>
 #include <options.hxx>
 #include <invert_laplace.hxx>
 #include <bout/petsclib.hxx>
+#include <boutexception.hxx>
 
 class LaplacePetsc : public Laplacian {
 public:
@@ -54,10 +56,10 @@ public:
   
 private:
   Field3D A, C, D;
-  bool coefchanged; // Set to true when A,C or D coefficients are changed
-  int lastflag;     // The flag used to construct the matrix
+  bool coefchanged;           // Set to true when A,C or D coefficients are changed
+  int lastflag;               // The flag used to construct the matrix
 
-  FieldPerp sol; // solution
+  FieldPerp sol;              // solution Field
   
   // Istart is the first row of MatA owned by the process, Iend is 1 greater than the last row.
   int Istart, Iend; 
@@ -65,8 +67,21 @@ private:
   int meshx, meshz, size, localN;
   MPI_Comm comm;
   Mat MatA;
-  Vec xs, bs; // solution, RHS
+  Vec xs, bs;                 // Solution and RHS vectors
   KSP ksp;
+  
+  Options *opts;              // Laplace Section Options Object
+  KSPType ksptype;            // Solver Type;
+
+  // Values specific to particular solvers
+  BoutReal richardson_damping_factor;  
+  BoutReal chebyshev_max, chebyshev_min;
+  int gmres_max_steps;
+
+  // Convergence Parameters. Solution is considered converged if |r_k| < max( rtol * |b| , atol )
+  // where r_k = b - Ax_k. The solution is considered diverged if |r_k| > dtol * |b|.
+  BoutReal rtol, atol, dtol;
+  int maxits; // Maximum number of iterations in solver.
 
   PetscLib lib;
 };
