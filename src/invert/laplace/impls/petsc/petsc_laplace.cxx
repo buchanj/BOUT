@@ -121,21 +121,40 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
               {
                 // Set Diagonal Values to 1
                 PetscScalar val = 1;
-                MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);  
+		Element(i,x,z, 0, 0, val, MatA );
                 
-                // Set values corresponding to node adjacent in x to -1 if zero gradiaent condition is set.
-                if(flags & INVERT_AC_IN_GRAD) {
-                  Element(i,x,z, 1, 0, -1.0, MatA ); 
-                }else
-                  Element(i,x,z, 1, 0, 0.0, MatA ); // Set to zero
+                // Set values corresponding to nodes adjacent in x if Neumann Boundary Conditions are required.
+                if(flags & INVERT_AC_IN_GRAD) 
+		  {
+		    if( flags & INVERT_4TH_ORDER )
+		      {
+			// Second Order Accuracy on Boundary
+			Element(i,x,z, 0, 0, -3.0 / (2.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, 1, 0, 2.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, 2, 0, -1.0/ (2.0*mesh->dx[x][y]), MatA ); 
+		      }
+		    else
+		      {
+			// First Order Accuracy on Boundary
+			Element(i,x,z, 0, 0, -1.0 / mesh->dx[x][y] , MatA );
+			Element(i,x,z, 1, 0, 1.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, 2, 0, 0.0, MatA );   // Reset this element to 0 in case 4th order flag was used previously
+		      }
+		  }
+		else
+		  {
+		    // Set off diagonal elements to zero
+		    Element(i,x,z, 1, 0, 0.0, MatA );
+		    Element(i,x,z, 2, 0, 0.0, MatA );
+		  }
                 
-                // Set Components of RHS
+                // Set Components of RHS and trial solution
                 val=0;
                 if( flags & INVERT_IN_RHS )         val = b[x][z];
                 else if( flags & INVERT_IN_SET )    val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
 
-		val=x0[x][z];
+		val = x0[x][z];
 		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
@@ -151,43 +170,124 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
             BoutReal A0, A1, A2, A3, A4, A5;
             A0 = A[x][y][z];
             Coeffs( x, y, z, A1, A2, A3, A4, A5 );
+	    
+	    BoutReal dx =  mesh->dx[x][y];
+	    BoutReal dz =  mesh->dz;
+	    BoutReal dxdz = mesh->dx[x][y] * mesh->dz;
             
             // Set Matrix Elements
             // f(i,j) = f(x,z)
-            PetscScalar val = A0 - 2.0*( (A1 / pow(mesh->dx[x][y],2.0)) + (A2 / pow(mesh->dz,2.0)) ); 
-            MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES); 
+            PetscScalar val = A0 - 2.0*( (A1 / pow(dx,2.0)) + (A2 / pow(dz,2.0)) ); 
+	    if( flags & INVERT_4TH_ORDER ) val = A0 - (5.0/2.0)*( (A1 / pow(dx,2.0)) + (A2 / pow(dz,2.0)) );
+	    Element(i,x,z, 0, 0, val, MatA );
             
+	    // f(i-2,j-2)
+	    val = 0;
+	    if( flags & INVERT_4TH_ORDER ) val = A3 / ( 144.0 * dxdz );
+	    Element(i,x,z, -2, -2, val, MatA ); 
+
+	    // f(i-2,j-1)
+	    if( flags & INVERT_4TH_ORDER ) val = -1.0 * A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, -2, -1, val, MatA );
+
+	    // f(i-2,j)
+	    if( flags & INVERT_4TH_ORDER ) val = (1.0/12.0) * ( -1.0 * A1/( pow( dx,2.0 ) ) + A4/dx ); 
+	    Element(i,x,z, -2, 0, val, MatA );
+
+	    // f(i-2,j+1)
+	    if( flags & INVERT_4TH_ORDER ) val = A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, -2, 1, val, MatA );
+
+	    // f(i-2,j+2)
+	    if( flags & INVERT_4TH_ORDER ) val = -1.0 * A3 / ( 144.0 * dxdz );
+	    Element(i,x,z, -2, 2, val, MatA ); 
+
+	    // f(i-1,j-2)
+	    if( flags & INVERT_4TH_ORDER ) val = -1.0 * A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, -1, -2, val, MatA );
+
             // f(i-1,j-1)
-            val = A3 / 4.0*( mesh->dx[x][y] * mesh->dz ); 
+            val = A3 / (4.0 * dxdz); 
+	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A3 / ( 9.0 * dxdz ); 
             Element(i,x,z, -1, -1, val, MatA ); 
+
+            // f(i-1,j)
+            val = A1/( pow( dx,2.0) ) - A4/( 2.0*dx ); 
+	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A1 / ( 3.0 * pow(dx,2.0) ) - 2.0 * A4 / ( 3.0*dx );
+            Element(i,x,z, -1, 0, val, MatA );
+
+	    // f(i-1,j+1)
+            val = -1.0 * A3 / ( 4.0 * dxdz ); 
+	    if( flags & INVERT_4TH_ORDER ) val = -4.0 * A3 / ( 9.0 * dxdz ); 
+            Element(i,x,z, -1, 1, val, MatA );
+
+	    // f(i-1,j+2)
+	    val = 0;
+	    if( flags & INVERT_4TH_ORDER ) val = A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, -1, 2, val, MatA );
+
+	    // f(i,j-2)
+	    if( flags & INVERT_4TH_ORDER ) val = (1.0/12.0) * ( -1.0 * A2 / ( pow(dz,2.0) ) + A5/dz ); 
+	    Element(i,x,z, 0, -2, val, MatA );
             
             // f(i,j-1)
-            val = A2/( pow( mesh->dz,2.0) ) - A5/( 2.0*mesh->dz ); 
+            val = A2/( pow(dz,2.0) ) - A5/( 2.0*dz ); 
+	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A2 / ( 3.0*pow(dz,2.0) ) - 2.0 * A5/( 3.0*dz );
             Element(i,x,z, 0, -1, val, MatA ); 
+
+            // f(i,j+1)
+            val = A2/( pow(dz,2.0) ) + A5/( 2.0*dz ); 
+	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A2 / ( 3.0*pow(dz,2.0) ) + 2.0 * A5 / ( 3.0*dz );
+            Element(i,x,z, 0, 1, val, MatA );
+
+	    // f(i,j+2)
+	    val = 0;
+	    if( flags & INVERT_4TH_ORDER ) val = (-1.0/12.0) * ( A2 / ( pow(dz,2.0) ) + A5 / dz ); 
+	    Element(i,x,z, 0, 2, val, MatA );
+
+	    // f(i+1,j-2)
+	    if( flags & INVERT_4TH_ORDER ) val = A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, 1, -2, val, MatA );
             
             // f(i+1,j-1)
-            val = -1.0*A3/( 4.0*mesh->dx[x][y]*mesh->dz); 
+            val = -1.0 * A3 / ( 4.0 * dxdz); 
+	    if( flags & INVERT_4TH_ORDER ) val = -4.0 * A3 / ( 9.0 * dxdz );
             Element(i,x,z, 1, -1, val, MatA );
             
-            // f(i-1,j)
-            val = A1/( pow( mesh->dx[x][y],2.0) ) - A4/( 2.0*mesh->dx[x][y] ); 
-            Element(i,x,z, -1, 0, val, MatA );
-            
             // f(i+1,j)
-            val = A1/( pow( mesh->dx[x][y],2.0) ) + A4/( 2.0*mesh->dx[x][y] ); 
+            val = A1/( pow(dx,2.0) ) + A4/( 2.0*dx ); 
+	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A1 / ( 3.0*pow(dx,2.0) ) + 2.0 * A4 / ( 3.0*dx ); 
             Element(i,x,z, 1, 0, val, MatA );
             
-            // f(i-1,j+1)
-            val = -1.0*A3/( 4*mesh->dx[x][y]*mesh->dz ); 
-            Element(i,x,z, -1, 1, val, MatA );
-            
-            // f(i,j+1)
-            val = A2/( pow( mesh->dz,2.0) ) + A5/( 2.0*mesh->dz ); 
-            Element(i,x,z, 0, 1, val, MatA );
-            
             // f(i+1,j+1)
-            val = A3/( 4.0*mesh->dx[x][y]*mesh->dz ); 
+            val = A3 / ( 4.0 * dxdz ); 
+	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A3 / ( 9.0 * dxdz ); 
             Element(i,x,z, 1, 1, val, MatA );
+
+	    // f(i+1,j+2)
+	    val = 0;
+	    if( flags & INVERT_4TH_ORDER ) val = -1.0 * A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, 1, 2, val, MatA );
+
+	    // f(i+2,j-2)
+	    if( flags & INVERT_4TH_ORDER ) val = -1.0 * A3 / ( 144.0 * dxdz );
+	    Element(i,x,z, 2, -2, val, MatA ); 
+
+	    // f(i+2,j-1)
+	    if( flags & INVERT_4TH_ORDER ) val = A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, 2, -1, val, MatA );
+
+	    // f(i+2,j)
+	    if( flags & INVERT_4TH_ORDER ) val = (-1.0/12.0) * ( A1 / ( pow(dx,2.0) ) + A4 / dx ); 
+	    Element(i,x,z, 2, 0, val, MatA );
+
+	    // f(i+2,j+1)
+	    if( flags & INVERT_4TH_ORDER ) val = -1.0 * A3 / ( 18.0 * dxdz );
+	    Element(i,x,z, 2, 1, val, MatA );
+
+	    // f(i+2,j+2)
+	    if( flags & INVERT_4TH_ORDER ) val = A3 / ( 144.0 * dxdz );
+	    Element(i,x,z, 2, 2, val, MatA ); 
             
             // Set Components of RHS Vector
             val  = b[x][z];
@@ -207,14 +307,34 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
           {
             for(int z=0; z<mesh->ngz-1; z++) 
               {
-                PetscScalar val = 1; 
-                MatSetValues(MatA,1,&i,1,&i,&val,INSERT_VALUES);
+                // Set Diagonal Values to 1
+                PetscScalar val = 1;
+		Element(i,x,z, 0, 0, val, MatA ); 
                 
-                if(flags & INVERT_AC_OUT_GRAD) {
-                  Element(i,x,z, -1, 0, -1.0, MatA );
-                }else {
-                  Element(i,x,z, -1, 0, 0.0, MatA );
-                }
+                // Set values corresponding to nodes adjacent in x if Neumann Boundary Conditions are required.
+                if(flags & INVERT_AC_OUT_GRAD) 
+		  {
+		    if( flags & INVERT_4TH_ORDER )
+		      {
+			// Second Order Accuracy on Boundary
+			Element(i,x,z,  0, 0, 3.0 / (2.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, -1, 0, -2.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, -2, 0, 1.0/ (2.0*mesh->dx[x][y]), MatA ); 
+		      }
+		    else
+		      {
+			// First Order Accuracy on Boundary
+			Element(i,x,z,  0, 0, 1.0 / mesh->dx[x][y] , MatA );
+			Element(i,x,z, -1, 0, -1.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, -2, 0, 0.0, MatA );   // Reset this element to 0 in case 4th order flag was used previously
+		      }
+		  }
+		else
+		  {
+		    // Set off diagonal elements to zero
+		    Element(i,x,z, -1, 0, 0.0, MatA );
+		    Element(i,x,z, -2, 0, 0.0, MatA );
+		  }
                 
                 // Set Components of RHS
                 val=0;
@@ -222,7 +342,7 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 else if( flags & INVERT_OUT_SET )   val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
 
-		val=x0[x][z];
+		val = x0[x][z];
 		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
@@ -255,7 +375,7 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
                 else if( flags & INVERT_IN_SET )    val = x0[x][z];
                 VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
 
-		val=x0[x][z];
+		val = x0[x][z];
 		VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
                 
                 i++; // Increment row in Petsc matrix
@@ -271,12 +391,13 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
             PetscScalar val  = b[x][z];
             VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
 
-	    val=x0[x][z];
+	    val = x0[x][z];
 	    VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
 
             i++;
           }
       }
+
     if( mesh->lastX() ) 
       {
         for(int x=mesh->xend+1; x<mesh->ngx; x++)
@@ -383,8 +504,8 @@ void LaplacePetsc::Element(int i, int x, int z, int xshift, int zshift, PetscSca
   if( !mesh->firstX() ) row_new += (xoffset - mesh->xstart);
 
   int col_new = z + zshift;
-  if( col_new < 0 )            col_new = meshz-1;
-  else if( col_new > meshz-1 ) col_new = 0;
+  if( col_new < 0 )            col_new += meshz;
+  else if( col_new > meshz-1 ) col_new -= meshz;
  
   // convert to global indices
   int index = (row_new * meshz) + col_new;
