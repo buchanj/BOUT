@@ -35,15 +35,16 @@
 
 class Options;
 
+#pragma once
 #ifndef __OPTIONS_H__
 #define __OPTIONS_H__
 
 #include "bout_types.hxx"
 
 #include <map>
-#include <strings.h>
-
-using namespace std;
+using std::map;
+#include <string>
+using std::string;
 
 struct OptionValue {
   string value;
@@ -63,6 +64,8 @@ public:
 
   /// Get a pointer to the only root instance
   static Options* getRoot();
+
+  static void cleanup();
 
   // Setting options
   void set(const string &key, const int &val, const string &source="");

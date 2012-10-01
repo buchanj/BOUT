@@ -51,6 +51,11 @@
 BoutMesh::BoutMesh(GridDataSource *s, Options *options) : Mesh(s) {
   if(options == NULL)
     options = Options::getRoot()->getSection("mesh");
+  
+  comm_x = MPI_COMM_NULL;
+  comm_inner = MPI_COMM_NULL;
+  comm_middle = MPI_COMM_NULL;
+  comm_outer = MPI_COMM_NULL;
 }
 
 BoutMesh::~BoutMesh() {
@@ -60,6 +65,20 @@ BoutMesh::~BoutMesh() {
   // Delete the boundary regions
   for(vector<BoundaryRegion*>::iterator it = boundary.begin(); it != boundary.end(); it++)
     delete (*it);
+
+  delete[] ShiftAngle;
+  
+  
+  if(comm_x != MPI_COMM_NULL)
+    MPI_Comm_free(&comm_x);
+  if(comm_inner != MPI_COMM_NULL)
+    MPI_Comm_free(&comm_inner);
+  if(comm_middle != MPI_COMM_NULL)
+    MPI_Comm_free(&comm_middle);
+  
+  if(comm_outer != MPI_COMM_NULL)
+    MPI_Comm_free(&comm_outer);
+  
 }
 
 int BoutMesh::load() {
@@ -79,10 +98,10 @@ int BoutMesh::load() {
   // Grid sizes
   
   if(Mesh::get(nx, "nx"))
-    return 1;
+    throw BoutException("Mesh must contain nx");
   
   if(Mesh::get(ny, "ny"))
-    return 1;
+    throw BoutException("Mesh must contain ny");
   
   output << "\tGrid size: " << nx << " by " << ny << endl;
 
@@ -90,13 +109,47 @@ int BoutMesh::load() {
   options->get("MXG", MXG, 2);
   options->get("MYG", MYG, 2);
   
-  options->get("NXPE", NXPE, 1); // Decomposition in the radial direction
-  if((NPES % NXPE) != 0) {
-    throw BoutException("Number of processors (%d) not divisible by NPs in x direction (%d)\n",
-                            NPES, NXPE);
-  }
+  if(options->isSet("NXPE")) { // Specified NXPE
+    options->get("NXPE", NXPE, 1); // Decomposition in the radial direction
+    if((NPES % NXPE) != 0) {
+      throw BoutException("Number of processors (%d) not divisible by NPs in x direction (%d)\n",
+                          NPES, NXPE);
+    }
+    
+    NYPE = NPES / NXPE;
+  }else {
+    // Choose NXPE
+    
+    MX = nx - 2*MXG;
+    
+    NXPE = -1; // Best option 
+    
+    BoutReal ideal = sqrt(MX * NPES / ny); // Results in square domains
 
-  NYPE = NPES / NXPE;
+    for(int i=1; i<= NPES; i++) { // Loop over all possibilities
+      output.write("Testing %d: %d, %d, %d, %d, %d\n",
+                   i, NPES % i, MX % i, MX / i, ny % (NPES/i), ny / (NPES/i));
+      if( (NPES % i == 0) &&      // Processors divide equally
+          (MX % i == 0) &&        // Mesh in X divides equally
+    //      (MX / i >= MXG) &&      // Resulting mesh is large enough
+          (ny % (NPES/i) == 0) && // Mesh in Y divides equally
+          (ny / (NPES/i) >= MYG) ) {
+        output.write("  Good value: %d\n", i);
+        // Found an acceptable value
+        if((NXPE < 1) || 
+           (fabs(ideal - i) < fabs(ideal - NXPE)))
+          NXPE = i; // Keep value nearest to the ideal
+      }
+    }
+    
+    if(NXPE < 1)
+      throw BoutException("Could not find a valid value for NXPE");
+    
+    NYPE = NPES / NXPE;
+    
+    output.write("\tDomain split (%d, %d) into domains (%d, %d)\n",
+                 NXPE, NYPE, MX / NXPE, ny / NYPE);
+  }
   
   /// Get X and Y processor indices
   PE_YIND = MYPE / NXPE;
@@ -118,9 +171,8 @@ int BoutMesh::load() {
   MY = ny;
   MYSUB = MY / NYPE;
   if((MY % NYPE) != 0) {
-    output.write("\tERROR: Cannot split %d Y points equally between %d processors\n",
-		 MY, NYPE);
-    return 1;
+    throw BoutException("\tERROR: Cannot split %d Y points equally between %d processors\n",
+                        MY, NYPE);
   }
   
   /// Get mesh options
@@ -131,8 +183,7 @@ int BoutMesh::load() {
       MZ++;
       output.write("WARNING: Number of toroidal points increased to %d\n", MZ);
     }else {
-      output.write("Error: Number of toroidal points must be 2^n + 1");
-      return 1;
+      throw BoutException("Error: Number of toroidal points must be 2^n + 1");
     }
   }
   OPTION(options, non_uniform,  false);
@@ -146,8 +197,6 @@ int BoutMesh::load() {
   OPTION(options, periodicX, false); // Periodic in X
   
   OPTION(options, async_send, false); // Whether to use asyncronous sends
-
-
   
   // Set global sizes and offsets
   GlobalNx = nx;
@@ -157,8 +206,7 @@ int BoutMesh::load() {
   OffsetX = PE_XIND*MXSUB;
   OffsetY = PE_YIND*MYSUB;
   OffsetZ = 0;
-
-
+  
   if(ShiftXderivs) {
     output.write("Using shifted X derivatives. Interpolation: ");
     if(ShiftOrder == 0) {
@@ -308,7 +356,7 @@ int BoutMesh::load() {
   }
   // Allocate some memory for twist-shift
 
-  ShiftAngle  = rvector(ngx);
+  ShiftAngle  = new BoutReal[ngx];
 
   // Try to read the shift angle from the grid file
   // NOTE: All processors should know the twist-shift angle (for invert_parderiv)
@@ -321,7 +369,7 @@ int BoutMesh::load() {
         ShiftAngle[i] = 0.0;
     }
     source->close();
-  }else {
+  }else if(MYG > 0) {
     output.write("\tWARNING: Twist-shift angle 'ShiftAngle' not found. Setting from zShift\n");
 
     if(YPROC(jyseps2_2) == PE_YIND) {
@@ -357,6 +405,12 @@ int BoutMesh::load() {
     if(MYPE_IN_CORE)
       MPI_Bcast(ShiftAngle, ngx, PVEC_REAL_MPI_TYPE, npcore-1, core_comm);
     
+    // Free MPI handles
+    if(core_comm != MPI_COMM_NULL)
+      MPI_Comm_free(&core_comm);
+    MPI_Group_free(&grp);
+    MPI_Group_free(&groupw);
+    
     msg_stack.pop();
   }
 
@@ -382,11 +436,11 @@ int BoutMesh::load() {
 
   /// Calculate contravariant metric components
   if(calcCovariant())
-    return 1;
+    throw BoutException("Error in calcCovariant call");
 
   /// Calculate Jacobian and Bxy
   if(jacobian())
-    return 1;
+    throw BoutException("Error in jacobian call");
   
   // Attempt to read J from the grid file
   Field2D Jcalc = J;
@@ -555,11 +609,15 @@ int BoutMesh::load() {
 	comm_inner = comm_tmp;
 	if(ixseps_lower == ixseps_outer) {
 	  // Between the separatrices is still in the PF region
-	  comm_middle = comm_inner;
+          MPI_Comm_dup(comm_inner, &comm_middle);
 	}else
-	  comm_middle = comm_outer;
+          MPI_Comm_dup(comm_outer, &comm_middle);
       }
       MPI_Group_free(&group);
+      if(group_tmp1 != MPI_GROUP_EMPTY)
+        MPI_Group_free(&group_tmp1);
+      if(group_tmp2 != MPI_GROUP_EMPTY)
+        MPI_Group_free(&group_tmp2);
       
       msg_stack.pop();
     }
@@ -583,12 +641,15 @@ int BoutMesh::load() {
       if(comm_tmp != MPI_COMM_NULL) {
 	comm_inner = comm_tmp;
 	if(ixseps_upper == ixseps_outer) {
-	  comm_middle = comm_inner;
+          MPI_Comm_dup(comm_inner, &comm_middle);
 	}else
-	  comm_middle = comm_outer;
+          MPI_Comm_dup(comm_outer, &comm_middle);
       }
       MPI_Group_free(&group);
-      
+      if(group_tmp1 != MPI_GROUP_EMPTY)
+        MPI_Group_free(&group_tmp1);
+      if(group_tmp2 != MPI_GROUP_EMPTY)
+        MPI_Group_free(&group_tmp2);
       msg_stack.pop();
     }
     
@@ -608,9 +669,11 @@ int BoutMesh::load() {
 #ifdef COMMDEBUG
     output << "CORE2 "<< proc[0] << ", " << proc[1] << endl;
 #endif
-    if( (proc[0] < 0) || (proc[1] < 0) )
-      throw BoutException("Invalid processor range for core processors");
-    MPI_Group_range_incl(group_world, 1, &proc, &group_tmp2);
+    if( (proc[0] < 0) || (proc[1] < 0) ) {
+      group_tmp2 = MPI_GROUP_EMPTY;
+    }else {
+      MPI_Group_range_incl(group_world, 1, &proc, &group_tmp2);
+    }
     
     MPI_Group_union(group_tmp1, group_tmp2, &group);
     MPI_Comm_create(BoutComm::get(), group, &comm_tmp);
@@ -618,8 +681,15 @@ int BoutMesh::load() {
       comm_inner = comm_tmp;
       
       if(ixseps_inner == ixseps_outer)
-	comm_middle = comm_inner;
+        MPI_Comm_dup(comm_inner, &comm_middle);
     }
+    
+    if(group_tmp1 != MPI_GROUP_EMPTY)
+      MPI_Group_free(&group_tmp1);
+    if(group_tmp2 != MPI_GROUP_EMPTY)
+      MPI_Group_free(&group_tmp2);
+    MPI_Group_free(&group);
+    
     msg_stack.pop();
   }
   
@@ -642,6 +712,12 @@ int BoutMesh::load() {
 	MPI_Comm_create(BoutComm::get(), group, &comm_tmp);
 	if(comm_tmp != MPI_COMM_NULL)
 	  comm_middle = comm_tmp;
+        
+        if(group_tmp1 != MPI_GROUP_EMPTY)
+          MPI_Group_free(&group_tmp1);
+        if(group_tmp2 != MPI_GROUP_EMPTY)
+          MPI_Group_free(&group_tmp2);
+        MPI_Group_free(&group);
       }
       msg_stack.pop();
     }else {
@@ -659,17 +735,23 @@ int BoutMesh::load() {
 	MPI_Comm_create(BoutComm::get(), group, &comm_tmp);
 	if(comm_tmp != MPI_COMM_NULL)
 	  comm_middle = comm_tmp;
+        
+        if(group_tmp1 != MPI_GROUP_EMPTY)
+          MPI_Group_free(&group_tmp1);
+        if(group_tmp2 != MPI_GROUP_EMPTY)
+          MPI_Group_free(&group_tmp2);
+        MPI_Group_free(&group);
       }
       msg_stack.pop();
     }
   }
+  MPI_Group_free(&group_world);
   // Now have communicators for all regions.
 
   //////////////////////////////////////////////////////
   /// Calculate Christoffel symbols. Needs communication
   if(geometry()) {
-    output << "  Differential geometry failed\n";
-    return 1;
+    throw BoutException("Differential geometry failed\n");
   }
 
   if(periodicX) {

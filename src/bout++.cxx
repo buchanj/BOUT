@@ -42,6 +42,7 @@ const char DEFAULT_OPT[] = "BOUT.inp";
 
 #include "mpi.h"
 
+#include <boutcomm.hxx>
 #include <bout.hxx>
 #include <datafile.hxx>
 #include <bout/solver.hxx>
@@ -130,12 +131,7 @@ void BoutInitialise(int argc, char **argv) {
   // Set the command-line arguments
   PetscLib::setArgs(argc, argv); // PETSc initialisation
   Solver::setArgs(argc, argv);   // Solver initialisation
-  
-  // If no communicator is supplied, initialise MPI
-  if (!BoutComm::getInstance()->isSet()) MPI_Init(&argc,&argv);
-
-  // If BoutComm was set, then assume that MPI_Finalize is called elsewhere
-  // but might need to revisit if that isn't the case
+  BoutComm::setArgs(argc, argv); // MPI initialisation
 
   int NPES, MYPE;
   MPI_Comm_size(BoutComm::get(), &NPES);
@@ -280,7 +276,7 @@ void BoutInitialise(int argc, char **argv) {
     
   }catch(BoutException &e) {
     output << "Error encountered during initialisation\n";
-    output << e.what() << endl;
+    throw e;
   }
 }
 
@@ -301,6 +297,18 @@ int bout_run(Solver *solver, rhsfunc physics_run) {
     return 1;
   }
   
+  if (!restart) {
+    /// Write initial state as time-point 0
+    
+    // Run RHS once to ensure all variables set
+    if (physics_run(0.0)) {
+      output.write("Physics RHS call failed\n");
+      return 1;
+    }
+    
+    dump.write();
+  }
+
   /// Run the solver
   output.write("Running simulation\n\n");
   int status;
@@ -342,7 +350,8 @@ int BoutFinalise() {
   // Close the output file
   dump.close();
 
-  // Delete 3D field memory
+  // Delete field memory
+  Field2D::cleanup();
   Field3D::cleanup();
 
   // Cleanup boundary factory
@@ -351,9 +360,18 @@ int BoutFinalise() {
   // Cleanup timer
   Timer::cleanup();
 
-  // If BoutComm was set, then assume that MPI_Finalize is called elsewhere
-  // but might need to revisit if that isn't the case
-  if (!BoutComm::getInstance()->isSet()) MPI_Finalize();
+  // Options tree
+  Options::cleanup();
+  OptionsReader::cleanup();
+
+  // Debugging message stack
+  msg_stack.clear();
+
+  // Logging output
+  Output::cleanup();
+  
+  // MPI communicator, including MPI_Finalize()
+  BoutComm::cleanup();
   
   return 0;
 }

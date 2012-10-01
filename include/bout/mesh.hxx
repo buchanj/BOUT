@@ -101,13 +101,13 @@ class Mesh {
  public:
   
   Mesh(GridDataSource *s);
-  virtual ~Mesh() { };
+  virtual ~Mesh();
   
   static Mesh* create(GridDataSource *source, Options *opt = NULL); ///< Create a Mesh object
   static Mesh* create(Options *opt = NULL);
   
   // Currently need to create and load mesh in separate calls. Will be removed
-  virtual int load() {}
+  virtual int load() {return 1;}
   virtual void outputVars(Datafile &file) {} ///< Output variables to a data file
 
   // Get routines to request data from mesh file
@@ -267,6 +267,7 @@ class Mesh {
   
  private:
   int gaussj(BoutReal **a, int n);
+  int *indxc, *indxr, *ipiv, ilen;
 };
 
 /// Define for reading a variable from the grid

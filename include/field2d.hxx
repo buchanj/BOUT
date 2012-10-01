@@ -26,14 +26,18 @@
  */
 class Field2D;
 
+#pragma once
 #ifndef __FIELD2D_H__
 #define __FIELD2D_H__
 
 #include "field.hxx"
 #include "field_data.hxx"
-#include "field3d.hxx"
+class Field3D; //#include "field3d.hxx"
 #include "fieldperp.hxx"
 #include "stencils.hxx"
+
+#include <stack>
+using std::stack;
 
 /*!
  * \brief 2D X-Y scalar fields
@@ -52,6 +56,8 @@ class Field2D : public Field, public FieldData {
 
   BoutReal **getData() const; // Remove this!
   
+  static void cleanup(); // Frees all memory
+
   /// Ensure data is allocated
   void allocate();
   bool isAllocated() { return data !=  NULL; } ///< Test if data is allocated
@@ -178,8 +184,8 @@ class Field2D : public Field, public FieldData {
   BoutReal **data;
 
   // Data stack: Blocks of memory for this class
-  static int nblocks, max_blocks;
-  static BoutReal ***block; // Pointer to blocks of memory
+  static stack<BoutReal**> block;
+  static bool recycle; ///< Re-use blocks rather than freeing/allocating
 
   void allocData();
   void freeData();
