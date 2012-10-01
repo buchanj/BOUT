@@ -171,14 +171,16 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
             A0 = A[x][y][z];
             Coeffs( x, y, z, A1, A2, A3, A4, A5 );
 	    
-	    BoutReal dx =  mesh->dx[x][y];
-	    BoutReal dz =  mesh->dz;
+	    BoutReal dx   = mesh->dx[x][y];
+	    BoutReal dx2  = pow( mesh->dx[x][y] , 2.0 );
+	    BoutReal dz   = mesh->dz;
+	    BoutReal dz2  = pow( mesh->dz, 2.0 );
 	    BoutReal dxdz = mesh->dx[x][y] * mesh->dz;
             
             // Set Matrix Elements
             // f(i,j) = f(x,z)
-            PetscScalar val = A0 - 2.0*( (A1 / pow(dx,2.0)) + (A2 / pow(dz,2.0)) ); 
-	    if( flags & INVERT_4TH_ORDER ) val = A0 - (5.0/2.0)*( (A1 / pow(dx,2.0)) + (A2 / pow(dz,2.0)) );
+            PetscScalar val = A0 - 2.0*( (A1 / dx2) + (A2 / dz2) ); 
+	    if( flags & INVERT_4TH_ORDER ) val = A0 - (5.0/2.0)*( (A1 / dx2) + (A2 / dz2) );
 	    Element(i,x,z, 0, 0, val, MatA );
             
 	    // f(i-2,j-2)
@@ -191,7 +193,7 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 	    Element(i,x,z, -2, -1, val, MatA );
 
 	    // f(i-2,j)
-	    if( flags & INVERT_4TH_ORDER ) val = (1.0/12.0) * ( -1.0 * A1/( pow( dx,2.0 ) ) + A4/dx ); 
+	    if( flags & INVERT_4TH_ORDER ) val = (1.0/12.0) * ( (-1.0 * A1 /  dx2 ) + (A4 / dx) ); 
 	    Element(i,x,z, -2, 0, val, MatA );
 
 	    // f(i-2,j+1)
@@ -212,8 +214,8 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
             Element(i,x,z, -1, -1, val, MatA ); 
 
             // f(i-1,j)
-            val = A1/( pow( dx,2.0) ) - A4/( 2.0*dx ); 
-	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A1 / ( 3.0 * pow(dx,2.0) ) - 2.0 * A4 / ( 3.0*dx );
+            val = ( A1 / dx2 ) - A4 / ( 2.0 * dx ); 
+	    if( flags & INVERT_4TH_ORDER ) val = ( 4.0 * A1 / ( 3.0 * dx2 ) ) - ( 2.0 * A4 / ( 3.0 * dx ) );
             Element(i,x,z, -1, 0, val, MatA );
 
 	    // f(i-1,j+1)
@@ -227,22 +229,22 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 	    Element(i,x,z, -1, 2, val, MatA );
 
 	    // f(i,j-2)
-	    if( flags & INVERT_4TH_ORDER ) val = (1.0/12.0) * ( -1.0 * A2 / ( pow(dz,2.0) ) + A5/dz ); 
+	    if( flags & INVERT_4TH_ORDER ) val = (1.0/12.0) * ( ( -1.0 * A2 / dz2 ) + ( A5 / dz ) ); 
 	    Element(i,x,z, 0, -2, val, MatA );
             
             // f(i,j-1)
-            val = A2/( pow(dz,2.0) ) - A5/( 2.0*dz ); 
-	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A2 / ( 3.0*pow(dz,2.0) ) - 2.0 * A5/( 3.0*dz );
+            val = ( A2 / dz2 ) - ( A5 / ( 2.0 * dz ) ); 
+	    if( flags & INVERT_4TH_ORDER ) val = ( 4.0 * A2 / ( 3.0 * dz2 ) ) - ( 2.0 * A5 / ( 3.0 * dz ) );
             Element(i,x,z, 0, -1, val, MatA ); 
 
             // f(i,j+1)
-            val = A2/( pow(dz,2.0) ) + A5/( 2.0*dz ); 
-	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A2 / ( 3.0*pow(dz,2.0) ) + 2.0 * A5 / ( 3.0*dz );
+            val = ( A2 / dz2 ) + ( A5 / ( 2.0 * dz ) ); 
+	    if( flags & INVERT_4TH_ORDER ) val = ( 4.0 * A2 / ( 3.0 * dz2 ) ) + ( 2.0 * A5 / ( 3.0 * dz ) );
             Element(i,x,z, 0, 1, val, MatA );
 
 	    // f(i,j+2)
 	    val = 0;
-	    if( flags & INVERT_4TH_ORDER ) val = (-1.0/12.0) * ( A2 / ( pow(dz,2.0) ) + A5 / dz ); 
+	    if( flags & INVERT_4TH_ORDER ) val = (-1.0/12.0) * ( ( A2 / dz2 ) + ( A5 / dz ) ); 
 	    Element(i,x,z, 0, 2, val, MatA );
 
 	    // f(i+1,j-2)
@@ -250,13 +252,13 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 	    Element(i,x,z, 1, -2, val, MatA );
             
             // f(i+1,j-1)
-            val = -1.0 * A3 / ( 4.0 * dxdz); 
+            val = -1.0 * A3 / ( 4.0 * dxdz ); 
 	    if( flags & INVERT_4TH_ORDER ) val = -4.0 * A3 / ( 9.0 * dxdz );
             Element(i,x,z, 1, -1, val, MatA );
             
             // f(i+1,j)
-            val = A1/( pow(dx,2.0) ) + A4/( 2.0*dx ); 
-	    if( flags & INVERT_4TH_ORDER ) val = 4.0 * A1 / ( 3.0*pow(dx,2.0) ) + 2.0 * A4 / ( 3.0*dx ); 
+            val = ( A1 / dx2 ) + ( A4 / ( 2.0 * dx ) ); 
+	    if( flags & INVERT_4TH_ORDER ) val = ( 4.0 * A1 / ( 3.0*dx2 ) ) + ( 2.0 * A4 / ( 3.0 * dx ) ); 
             Element(i,x,z, 1, 0, val, MatA );
             
             // f(i+1,j+1)
@@ -278,7 +280,7 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 	    Element(i,x,z, 2, -1, val, MatA );
 
 	    // f(i+2,j)
-	    if( flags & INVERT_4TH_ORDER ) val = (-1.0/12.0) * ( A1 / ( pow(dx,2.0) ) + A4 / dx ); 
+	    if( flags & INVERT_4TH_ORDER ) val = (-1.0/12.0) * ( (A1 / dx2) + (A4 / dx) ); 
 	    Element(i,x,z, 2, 0, val, MatA );
 
 	    // f(i+2,j+1)
@@ -546,8 +548,11 @@ void LaplacePetsc::Coeffs( int x, int y, int z, BoutReal &coef1, BoutReal &coef2
   // A first order derivative term
   if( (x > 0) && (x < (mesh->ngx-1)) )
     {
-      coef4 += mesh->g11[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
-      coef5 += mesh->g13[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
+      if( C[x][y][z] != 0 )
+	{
+	  coef4 += mesh->g11[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
+	  coef5 += mesh->g13[x][y] * (C[x+1][y][z] - C[x-1][y][z]) / (2.*mesh->dx[x][y]*(C[x][y][z]));
+	}
     }
   
   if(mesh->ShiftXderivs && mesh->IncIntShear) {
