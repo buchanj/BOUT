@@ -128,17 +128,21 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 		  {
 		    if( flags & INVERT_4TH_ORDER )
 		      {
-			// Second Order Accuracy on Boundary
-			Element(i,x,z, 0, 0, -3.0 / (2.0*mesh->dx[x][y]), MatA ); 
-			Element(i,x,z, 1, 0, 2.0 / mesh->dx[x][y], MatA ); 
-			Element(i,x,z, 2, 0, -1.0/ (2.0*mesh->dx[x][y]), MatA ); 
+			// Fourth Order Accuracy on Boundary
+			Element(i,x,z, 0, 0, -25.0 / (12.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, 1, 0,   4.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, 2, 0,  -3.0 / mesh->dx[x][y], MatA );
+			Element(i,x,z, 3, 0,   4.0 / (3.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, 4, 0,  -1.0 / (4.0*mesh->dx[x][y]), MatA );
 		      }
 		    else
 		      {
-			// First Order Accuracy on Boundary
-			Element(i,x,z, 0, 0, -1.0 / mesh->dx[x][y] , MatA );
-			Element(i,x,z, 1, 0, 1.0 / mesh->dx[x][y], MatA ); 
-			Element(i,x,z, 2, 0, 0.0, MatA );   // Reset this element to 0 in case 4th order flag was used previously
+			// Second Order Accuracy on Boundary
+			Element(i,x,z, 0, 0, -3.0 / (2.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, 1, 0,  2.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, 2, 0, -1.0 / (2.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, 3, 0, 0.0, MatA );  // Reset these elements to 0 in case 4th order flag was used previously
+			Element(i,x,z, 4, 0, 0.0, MatA );
 		      }
 		  }
 		else
@@ -146,6 +150,8 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 		    // Set off diagonal elements to zero
 		    Element(i,x,z, 1, 0, 0.0, MatA );
 		    Element(i,x,z, 2, 0, 0.0, MatA );
+		    Element(i,x,z, 3, 0, 0.0, MatA );
+		    Element(i,x,z, 4, 0, 0.0, MatA );
 		  }
                 
                 // Set Components of RHS and trial solution
@@ -314,29 +320,35 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 		Element(i,x,z, 0, 0, val, MatA ); 
                 
                 // Set values corresponding to nodes adjacent in x if Neumann Boundary Conditions are required.
-                if(flags & INVERT_AC_OUT_GRAD) 
+		if(flags & INVERT_AC_IN_GRAD) 
 		  {
 		    if( flags & INVERT_4TH_ORDER )
 		      {
-			// Second Order Accuracy on Boundary
-			Element(i,x,z,  0, 0, 3.0 / (2.0*mesh->dx[x][y]), MatA ); 
-			Element(i,x,z, -1, 0, -2.0 / mesh->dx[x][y], MatA ); 
-			Element(i,x,z, -2, 0, 1.0/ (2.0*mesh->dx[x][y]), MatA ); 
+			// Fourth Order Accuracy on Boundary
+			Element(i,x,z,  0, 0, 25.0 / (12.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, -1, 0, -4.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, -2, 0,  3.0 / mesh->dx[x][y], MatA );
+			Element(i,x,z, -3, 0, -4.0 / (3.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, -4, 0,  1.0 / (4.0*mesh->dx[x][y]), MatA );
 		      }
 		    else
 		      {
-			// First Order Accuracy on Boundary
-			Element(i,x,z,  0, 0, 1.0 / mesh->dx[x][y] , MatA );
-			Element(i,x,z, -1, 0, -1.0 / mesh->dx[x][y], MatA ); 
-			Element(i,x,z, -2, 0, 0.0, MatA );   // Reset this element to 0 in case 4th order flag was used previously
+			// Second Order Accuracy on Boundary
+			Element(i,x,z,  0, 0,  3.0 / (2.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, -1, 0, -2.0 / mesh->dx[x][y], MatA ); 
+			Element(i,x,z, -2, 0,  1.0 / (2.0*mesh->dx[x][y]), MatA ); 
+			Element(i,x,z, -3, 0,  0.0, MatA );  // Reset these elements to 0 in case 4th order flag was used previously
+			Element(i,x,z, -4, 0,  0.0, MatA );
 		      }
 		  }
 		else
 		  {
 		    // Set off diagonal elements to zero
-		    Element(i,x,z, -1, 0, 0.0, MatA );
+		    Element(i,x,z,  1, 0, 0.0, MatA );
 		    Element(i,x,z, -2, 0, 0.0, MatA );
-		  }
+		    Element(i,x,z, -3, 0, 0.0, MatA );
+		    Element(i,x,z, -4, 0, 0.0, MatA );
+		  }            
                 
                 // Set Components of RHS
                 val=0;
