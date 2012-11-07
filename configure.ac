@@ -64,7 +64,6 @@ AC_SUBST(EXTRA_LIBS)
 
 # Adding variables for additional sources
 AC_SUBST(PRECON_SOURCE)
-AC_SUBST(FILEIO_SOURCE)
 AC_SUBST(FACETS_SOURCE)
 
 AC_DEFUN([CREATE_DIR],
@@ -237,6 +236,16 @@ MFILE
   then
     CXXFLAGS="$CXXFLAGS -DBOUT_HAS_PETSC -DBOUT_HAS_PETSC_DEV"
     echo "Using PETSc-dev interface"
+  else
+    echo "***********************************"
+    echo "WARNING: Unrecognised PETSc version"
+    echo "MAJOR VERSION: $PETSC_VERSION_MAJOR"
+    echo "MINOR VERSION: $PETSC_VERSION_MINOR"
+    echo "RELEASE      : $PETSC_VERSION_RELEASE"
+    echo ""
+    echo "Trying PETSc-dev interface"
+    echo "***********************************"
+    CXXFLAGS="$CXXFLAGS -DBOUT_HAS_PETSC -DBOUT_HAS_PETSC_DEV"
   fi
 
 else
@@ -488,75 +497,81 @@ fi
 # netCDF support
 #############################################################
 
+NCCONF="" # Configuration script
+
 if test "$with_netcdf" != "no"
 then
-  # Try to find a valid NetCDF installation
+  ##########################################
+  # Try to find a valid NetCDF configuration 
 
-  echo "Searching for NetCDF library"
+  echo "Searching for NetCDF configuration"
 
-  if test "$with_netcdf" = "yes"
+  OLDNCDF="0" # Indicates whether nc-config or ncxx4-config
+
+  if (test "$with_netcdf" = "yes") || (test "$with_netcdf" = "")
   then
     # No path specified. Try using nc-config
-    if type nc-config > /dev/null 2>&1; then
-      NCPATH=`nc-config --prefix`
-    else
-      NCPATH=""
-    fi
-  else
-    NCPATH="$with_netcdf"
-  fi
-
-  # Test if C++ support is included
-  if type nc-config > /dev/null 2>&1; then
-    if test `nc-config --has-c++` = "yes"
-    then
-      echo " -> C++ support included"
-    else
-      echo " -> NO C++ SUPPORT"
-      with_netcdf = "no"
-    fi
-  else
-    if type $NCPATH/bin/nc-config > /dev/null 2>&1; then
-      if test `$NCPATH/bin/nc-config --has-c++` = "yes"
+    if type ncxx4-config > /dev/null 2>&1; then
+      NCCONF=`which ncxx4-config` # New interface
+    elif type nc-config > /dev/null 2>&1; then
+      # Older interface. May or may not have C++ support
+      echo " -> nc-config script found:" `which nc-config`
+      if test `nc-config --has-c++` = "yes"
       then
         echo " -> C++ support included"
+        NCCONF=`which nc-config`
+	OLDNCDF="1"
       else
         echo " -> NO C++ SUPPORT"
-        with_netcdf = "no"
       fi
     else
-      echo " -> nc-config not found. Can't check C++ support"
+        echo " -> No configure script found. Specify using --with-netcdf option"
     fi
-  fi
-fi
-
-if test "$with_netcdf" != "no"
-then
-  if type nc-config > /dev/null 2>&1
-  then
-    NCP=`which nc-config`
-    echo " -> Using $NCP for configuration settings"
-    # Can use nc-config to get configuration options
-    # Set a compile-time flag
-    CXXFLAGS="$CXXFLAGS -DNCDF"
-    NCPATH=`nc-config --prefix`
+  else
+    # see if configure scripts are in path
     
-    # Add extra sources
-    FILEIO_SOURCE="$FILEIO_SOURCE nc_format.cxx"
-
-    NCINC=`nc-config --cflags`
+    if type $with_netcdf/ncxx4-config > /dev/null 2>&1; then
+      NCCONF="$with_netcdf/ncxx4-config"
+    elif type $with_netcdf/bin/ncxx4-config > /dev/null 2>&1; then
+      NCCONF="$with_netcdf/bin/ncxx4-config"
+    elif type $with_netcdf/nc-config > /dev/null 2>&1; then
+      NCCONF="$with_netcdf/nc-config"
+      OLDNCDF="1"
+    elif type $with_netcdf/bin/nc-config > /dev/null 2>&1; then
+      NCCONF="$with_netcdf/bin/nc-config"
+      OLDNCDF="1"
+    fi    
+  fi
+  
+  ##########################################
+  # Get configuration
+  if test "$NCCONF" != ""; then
+    echo " -> NetCDF config script found: $NCCONF"
+    
+    NCINC=`$NCCONF --cflags`
     EXTRA_INCS="$EXTRA_INCS $NCINC"
-    NCLIB=`nc-config --libs | sed s/-lnetcdf/-lnetcdf_c++\ -lnetcdf/` # Note netcdf_c++ needed
+
+    if test "$OLDNCDF" == "1"; then
+      NCLIB=`$NCCONF --libs | sed s/-lnetcdf/-lnetcdf_c++\ -lnetcdf/` # Note netcdf_c++ needed
+      LDFLAGS="$LDFLAGS -Wl,-rpath,`nc-config --prefix`/lib"
+
+      CXXFLAGS="$CXXFLAGS -DNCDF"
+      echo " -> NetCDF support enabled"
+    else
+      NCLIB=`$NCCONF --libs`
+      
+      CXXFLAGS="$CXXFLAGS -DNCDF4"
+      echo " -> NetCDF-4 support enabled"
+    fi
     EXTRA_LIBS="$EXTRA_LIBS $NCLIB"
-    LDFLAGS="$LDFLAGS -Wl,-rpath,`nc-config --prefix`/lib"
 
     file_formats="$file_formats netCDF"
-
-    echo " -> NetCDF support enabled"
-    echo ""
+    NCPATH="found"
   else
-  # No nc-config. Check the NetCDF path manually
-
+    # No configuration script. Check the NetCDF path manually
+    
+    NCPATH=$with_netcdf
+    
     if test "$NCPATH" != ""
     then
       # Path set, so check if libraries present
@@ -605,9 +620,6 @@ then
       # Set a compile-time flag
       CXXFLAGS="$CXXFLAGS -DNCDF"
 
-      # Add extra sources
-      FILEIO_SOURCE="$FILEIO_SOURCE nc_format.cxx"
-
       if test "$NCPATH" != ""; then
         echo " -> path $NCPATH"
         EXTRA_INCS="$EXTRA_INCS -I$NCPATH/include"
@@ -620,13 +632,11 @@ then
       file_formats="$file_formats netCDF"
 
       echo " -> NetCDF support enabled"
+    else
+      echo "NetCDF support disabled"
     fi
   fi
-fi
 
-if test "$with_netcdf" = "no"
-then
-  echo "NetCDF support disabled"
 fi
 
 echo ""
@@ -768,8 +778,6 @@ else
   ## Add PDB support if available
   if test "$with_pdb" = "yes"
   then
-
-    FILEIO_SOURCE="$FILEIO_SOURCE pdb_format.cxx"
     EXTRA_LIBS="$EXTRA_LIBS -lpdb -lpml -lscore \$(shell $PACT/bin/pact -link)"
 
     # Set a compile-time flag. PDBF because PDB already used in score.h
