@@ -344,7 +344,7 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
 		else
 		  {
 		    // Set off diagonal elements to zero
-		    Element(i,x,z,  1, 0, 0.0, MatA );
+		    Element(i,x,z, -1, 0, 0.0, MatA );
 		    Element(i,x,z, -2, 0, 0.0, MatA );
 		    Element(i,x,z, -3, 0, 0.0, MatA );
 		    Element(i,x,z, -4, 0, 0.0, MatA );
