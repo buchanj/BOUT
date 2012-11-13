@@ -444,16 +444,31 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
   VecAssemblyEnd(xs);
 
   // Configure Linear Solver               
-  KSPSetOperators( ksp,MatA,MatA,DIFFERENT_NONZERO_PATTERN ); 
-  KSPSetType( ksp, ksptype );
+  KSPSetOperators( ksp,MatA,MatA,DIFFERENT_NONZERO_PATTERN );
 
-  if( ksptype == KSPRICHARDSON )     KSPRichardsonSetScale( ksp, richardson_damping_factor );
-  else if( ksptype == KSPCHEBYSHEV ) KSPChebyshevSetEigenvalues( ksp, chebyshev_max, chebyshev_min );
-  else if( ksptype == KSPGMRES )     KSPGMRESSetRestart( ksp, gmres_max_steps );
-
-  KSPSetTolerances( ksp, rtol, atol, dtol, maxits );
-  if( !( flags & INVERT_START_NEW ) ) KSPSetInitialGuessNonzero( ksp, (PetscBool) true );
-  KSPSetFromOptions( ksp );                
+  // Check if a direct solve is required (uses LU factorization)
+  int direct = 0;
+  opts->get("direct", direct, 0);
+  PC pc;
+ 
+  if( direct == 0 )
+    {
+      KSPSetType( ksp, ksptype );
+      
+      if( ksptype == KSPRICHARDSON )     KSPRichardsonSetScale( ksp, richardson_damping_factor );
+      else if( ksptype == KSPCHEBYSHEV ) KSPChebyshevSetEigenvalues( ksp, chebyshev_max, chebyshev_min );
+      else if( ksptype == KSPGMRES )     KSPGMRESSetRestart( ksp, gmres_max_steps );
+      
+      KSPSetTolerances( ksp, rtol, atol, dtol, maxits );
+      if( !( flags & INVERT_START_NEW ) ) KSPSetInitialGuessNonzero( ksp, (PetscBool) true );
+      KSPSetFromOptions( ksp );           
+    }
+  else
+    {
+      output << endl << "Using LU decompostion for direct solution of system" << endl << endl;
+      KSPGetPC(ksp,&pc);
+      PCSetType(pc,PCLU);
+    }
  
   // Solve the system
   KSPSolve( ksp, bs, xs );               
